@@ -11,26 +11,70 @@ const canvasCtx = canvas.getContext('2d');
 recordBtn.onclick = async () => {
   const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
+  // Reset previous audio chunks
+  audioChunks = [];
+
   // Setup media recorder
   mediaRecorder = new MediaRecorder(stream);
-  audioChunks = [];
 
   mediaRecorder.ondataavailable = event => {
     audioChunks.push(event.data);
   };
 
-  mediaRecorder.onstop = () => {
-    const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+  // Important: define onstop ONCE for this recorder
+  mediaRecorder.onstop = async () => {
+    const audioBlob = new Blob(audioChunks, { type: 'audio/ogg; codecs=opus' });
     const audioUrl = URL.createObjectURL(audioBlob);
     audioElement.src = audioUrl;
 
-    // Stop waveform animation
+    // Create a new audio element for this recording
+const audioItem = document.createElement('div');
+audioItem.className = 'recording-item';
+
+const audio = document.createElement('audio');
+audio.controls = true;
+audio.src = audioUrl;
+
+const meta = document.createElement('p');
+meta.textContent = `Duration: ${duration}s | Size: ${formatBytes(audioBlob.size)}`;
+
+audioItem.appendChild(audio);
+audioItem.appendChild(meta);
+
+document.getElementById('recordings-list').appendChild(audioItem);
+
+
     cancelAnimationFrame(animationId);
+    document.getElementById('size').textContent = formatBytes(audioBlob.size);
+
+    try {
+      const arrayBuffer = await audioBlob.arrayBuffer();
+      const audioCtxForDecode = new AudioContext();
+      const audioBuffer = await audioCtxForDecode.decodeAudioData(arrayBuffer);
+
+      const duration = audioBuffer.duration.toFixed(2);
+      const sampleRate = audioBuffer.sampleRate;
+      const channelData = audioBuffer.getChannelData(0);
+
+      const rms = Math.sqrt(
+        channelData.reduce((sum, val) => sum + val * val, 0) / channelData.length
+      );
+      const peak = Math.max(...channelData.map(Math.abs));
+
+      document.getElementById('duration').textContent = duration;
+      document.getElementById('sample-rate').textContent = sampleRate;
+      document.getElementById('rms').textContent = rms.toFixed(4);
+      document.getElementById('peak').textContent = peak.toFixed(4);
+
+    } catch (e) {
+      console.error('Audio decoding failed:', e);
+    }
   };
 
+  // Start recording
   mediaRecorder.start();
 
-  // Setup waveform visualization
+  // Start visualization
   audioCtx = new AudioContext();
   analyser = audioCtx.createAnalyser();
   source = audioCtx.createMediaStreamSource(stream);
@@ -45,6 +89,7 @@ recordBtn.onclick = async () => {
   recordBtn.disabled = true;
   stopBtn.disabled = false;
 };
+
 
 stopBtn.onclick = () => {
   mediaRecorder.stop();
@@ -65,7 +110,7 @@ function drawWaveform() {
   canvasCtx.fillRect(0, 0, width, height);
 
   canvasCtx.lineWidth = 2;
-  canvasCtx.strokeStyle = 'blue';
+  canvasCtx.strokeStyle = 'black';
 
   canvasCtx.beginPath();
 
@@ -87,4 +132,9 @@ function drawWaveform() {
 
   canvasCtx.lineTo(canvas.width, canvas.height / 2);
   canvasCtx.stroke();
+}
+function formatBytes(bytes) {
+  const sizes = ['Bytes', 'KB', 'MB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(1024));
+  return parseFloat((bytes / Math.pow(1024, i)).toFixed(2)) + ' ' + sizes[i];
 }
